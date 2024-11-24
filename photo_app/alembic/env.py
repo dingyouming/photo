@@ -6,10 +6,12 @@ from sqlalchemy import engine_from_config, pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from core.config import settings
-from core.models.base import Base
-from core.models.photo import Album, Photo, PhotoMetadata, Tag
-from core.models.user import User
+from photo_app.core.config import settings
+from photo_app.core.models.base import Base
+from photo_app.core.models.photo import Photo, PhotoMetadata
+from photo_app.core.models.tag import Tag
+from photo_app.core.models.album import Album
+from photo_app.core.models.user import User
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
@@ -25,14 +27,7 @@ if config.config_file_name is not None:
 target_metadata = Base.metadata
 
 # 根据配置选择数据库URL
-if settings.DB_TYPE == "sqlite":
-    config.set_main_option("sqlalchemy.url", f"sqlite:///{settings.DB_PATH}")
-else:
-    config.set_main_option(
-        "sqlalchemy.url",
-        f"oracle://{settings.DB_USER}:{settings.DB_PASSWORD}@"
-        f"{settings.DB_HOST}:{settings.DB_PORT}/{settings.DB_SERVICE}"
-    )
+config.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
 
 
 def run_migrations_offline() -> None:

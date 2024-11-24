@@ -1,125 +1,62 @@
-from typing import List, Optional
+from datetime import datetime, timezone
+from typing import Optional
 
-from sqlalchemy import (
-    Column,
-    DateTime,
-    Float,
-    ForeignKey,
-    Integer,
-    String,
-    Table,
-)
-from sqlalchemy.orm import relationship
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String, Table
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from core.models.base import Base
+from photo_app.core.models.base import Base
 
-# Many-to-many relationship tables
-photo_tags = Table(
-    "photo_tags",
-    Base.metadata,
-    Column("photo_id", Integer, ForeignKey("photo.id"), primary_key=True),
-    Column("tag_id", Integer, ForeignKey("tag.id"), primary_key=True),
-)
-
-photo_albums = Table(
-    "photo_albums",
-    Base.metadata,
-    Column("photo_id", Integer, ForeignKey("photo.id"), primary_key=True),
-    Column("album_id", Integer, ForeignKey("album.id"), primary_key=True),
-)
-
+# 照片-标签关联表和照片-相册关联表已移至各自的模型文件中
 
 class Photo(Base):
-    __tablename__ = "photo"
+    __tablename__ = "photos"
 
-    id = Column(Integer, primary_key=True, index=True)
-    filename = Column(String(255), nullable=False)
-    filepath = Column(String(1024), nullable=False, unique=True)
-    thumbnail_path = Column(String(1024))
+    id: Mapped[int] = mapped_column(primary_key=True)
+    filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    filepath: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
+    size: Mapped[int] = mapped_column(Integer, nullable=False)
+    upload_date: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
     
-    # 基本信息
-    size = Column(Integer, nullable=False)  # 文件大小（字节）
-    width = Column(Integer)
-    height = Column(Integer)
-    format = Column(String(20))  # 图片格式 (JPEG, PNG等)
+    # 存储状态相关字段
+    storage_status: Mapped[str] = mapped_column(String(20), default="pending")
+    failure_reason: Mapped[Optional[str]] = mapped_column(String(255))
+    retry_count: Mapped[int] = mapped_column(Integer, default=0)
     
-    # EXIF数据
-    camera_make = Column(String(100))
-    camera_model = Column(String(100))
-    focal_length = Column(Float)
-    exposure_time = Column(String(50))
-    aperture = Column(Float)
-    iso = Column(Integer)
-    taken_at = Column(DateTime)
+    # 备份相关字段
+    backup_status: Mapped[str] = mapped_column(String(20), default="pending")
+    backup_path: Mapped[Optional[str]] = mapped_column(String(255))
+    restore_status: Mapped[Optional[str]] = mapped_column(String(20))
     
-    # 地理信息
-    latitude = Column(Float)
-    longitude = Column(Float)
-    altitude = Column(Float)
-    location_name = Column(String(255))
+    # 加密相关字段
+    is_encrypted: Mapped[bool] = mapped_column(Boolean, default=False)
+    encryption_date: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    encryption_method: Mapped[Optional[str]] = mapped_column(String(50))
     
-    # AI生成的描述
-    description = Column(String(1000))
-    
+    # 版本控制字段
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    version_date: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+
     # 关系
-    user_id = Column(Integer, ForeignKey("user.id"), nullable=False)
     user = relationship("User", back_populates="photos")
-    
-    tags = relationship("Tag", secondary=photo_tags, back_populates="photos")
-    albums = relationship("Album", secondary=photo_albums, back_populates="photos")
-    
-    # 元数据
-    metadata = relationship("PhotoMetadata", back_populates="photo", uselist=False)
-
-
-class Tag(Base):
-    __tablename__ = "tag"
-
-    id = Column(Integer, primary_key=True, index=True)
-    name = Column(String(50), nullable=False, unique=True)
-    source = Column(String(20))  # manual, ai, exif
-    confidence = Column(Float)  # AI标签的置信度
-    
-    photos = relationship("Photo", secondary=photo_tags, back_populates="tags")
-
-
-class Album(Base):
-    __tablename__ = "album"
-
-    id = Column(Integer, primary_key=True, index=True)
-    name = Column(String(255), nullable=False)
-    description = Column(String(1000))
-    cover_photo_id = Column(Integer, ForeignKey("photo.id"))
-    user_id = Column(Integer, ForeignKey("user.id"), nullable=False)
-    
-    photos = relationship("Photo", secondary=photo_albums, back_populates="albums")
-    user = relationship("User", back_populates="albums")
-
+    photo_metadata = relationship("PhotoMetadata", back_populates="photo", uselist=False, cascade="all, delete-orphan")
+    tags = relationship("Tag", secondary="photo_tags", back_populates="photos")
+    albums = relationship("Album", secondary="photo_albums", back_populates="photos")
 
 class PhotoMetadata(Base):
     __tablename__ = "photo_metadata"
 
-    id = Column(Integer, primary_key=True, index=True)
-    photo_id = Column(Integer, ForeignKey("photo.id"), unique=True, nullable=False)
-    
-    # 颜色信息
-    color_profile = Column(String(50))
-    dominant_colors = Column(String(255))  # JSON格式的颜色列表
-    
-    # 人脸检测
-    faces_detected = Column(Integer)
-    face_locations = Column(String(1000))  # JSON格式的人脸位置
-    
-    # 场景分类
-    scene_type = Column(String(100))
-    scene_confidence = Column(Float)
-    
-    # 图像质量
-    blur_score = Column(Float)
-    exposure_score = Column(Float)
-    aesthetic_score = Column(Float)
-    
-    # 其他元数据
-    raw_exif = Column(String(4000))  # JSON格式的原始EXIF数据
-    
-    photo = relationship("Photo", back_populates="metadata")
+    id: Mapped[int] = mapped_column(primary_key=True)
+    photo_id: Mapped[int] = mapped_column(ForeignKey("photos.id"), unique=True)
+    color_profile: Mapped[Optional[str]] = mapped_column(String(50))
+    dominant_colors: Mapped[Optional[str]] = mapped_column(String(255))
+    faces_detected: Mapped[Optional[int]] = mapped_column(Integer)
+    face_locations: Mapped[Optional[str]] = mapped_column(String(1000))
+    scene_type: Mapped[Optional[str]] = mapped_column(String(50))
+    scene_confidence: Mapped[Optional[float]] = mapped_column(Integer)
+    blur_score: Mapped[Optional[float]] = mapped_column(Integer)
+    exposure_score: Mapped[Optional[float]] = mapped_column(Integer)
+    aesthetic_score: Mapped[Optional[float]] = mapped_column(Integer)
+    raw_exif: Mapped[Optional[str]] = mapped_column(String(4000))
+
+    photo = relationship("Photo", back_populates="photo_metadata")

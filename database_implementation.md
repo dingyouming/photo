@@ -125,9 +125,107 @@ CREATE INDEX idx_file_path ON photos(path);
 CREATE INDEX idx_sync_status ON photos(sync_status);
 ```
 
-## 三、数据访问层
+## 三、SQLAlchemy 最佳实践
 
-### 3.1 基础 DAO 实现
+### 3.1 基础模型配置
+```python
+from datetime import datetime, timezone
+from sqlalchemy.orm import as_declarative, declared_attr
+
+@as_declarative()
+class Base:
+    # 自动生成表名
+    @declared_attr
+    def __tablename__(cls) -> str:
+        return cls.__name__.lower()
+
+    # 使用 timezone-aware 时间戳
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(
+        DateTime,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc)
+    )
+```
+
+### 3.2 异步关系加载
+在异步上下文中加载关系时，使用 selectinload 而不是 lazy loading：
+
+```python
+from sqlalchemy.orm import selectinload
+
+# 正确的做法
+stmt = select(Photo).options(
+    selectinload(Photo.tags), 
+    selectinload(Photo.albums)
+).where(Photo.id == photo_id)
+result = await session.execute(stmt)
+photo = result.scalar_one()
+
+# 避免的做法
+photo = await session.get(Photo, photo_id)
+await session.refresh(photo)  # 可能导致 N+1 查询问题
+```
+
+### 3.3 SQLAlchemy 2.0 兼容性
+- 使用 `sqlalchemy.orm` 中的新式导入路径
+- 避免使用已弃用的 API（如 `sqlalchemy.ext.declarative`）
+- 使用 timezone-aware 的 datetime 对象
+
+### 3.4 数据库初始化和测试
+```python
+# 数据库初始化
+async def init_db(custom_engine=None) -> None:
+    """初始化数据库
+    
+    Args:
+        custom_engine: 可选的自定义数据库引擎，主要用于测试
+    """
+    target_engine = custom_engine or engine
+    async with target_engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+# 测试配置
+TEST_DATABASE_URL = "sqlite+aiosqlite:///./data/test.db"
+
+@pytest.fixture(scope="function")
+async def test_engine():
+    """创建测试引擎"""
+    engine = create_async_engine(TEST_DATABASE_URL, echo=True)
+    
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
+        await conn.run_sync(Base.metadata.create_all)
+    
+    try:
+        yield engine
+    finally:
+        await engine.dispose()
+```
+
+### 3.5 测试最佳实践
+1. 使用独立的测试数据库
+   - 配置专门的测试数据库 URL
+   - 避免污染开发/生产数据库
+
+2. 自动化的表管理
+   - 测试前自动创建所需的表
+   - 测试后自动清理数据
+   - 使用 fixture 管理数据库生命周期
+
+3. 事务管理
+   - 每个测试在独立的事务中运行
+   - 测试结束后自动回滚
+   - 避免测试之间的数据干扰
+
+4. 异步测试支持
+   - 使用 pytest-asyncio 运行异步测试
+   - 正确处理异步上下文
+   - 避免混用同步和异步操作
+
+## 四、数据访问层
+
+### 4.1 基础 DAO 实现
 ```python
 from typing import List, Dict, Any
 from datetime import datetime
@@ -184,7 +282,7 @@ class StorageManager:
         pass
 ```
 
-### 3.2 高级查询实现
+### 4.2 高级查询实现
 ```python
 class PhotoQueryService:
     def __init__(self, db_session):
@@ -242,9 +340,9 @@ class SyncManager:
         pass
 ```
 
-## 四、数据迁移
+## 五、数据迁移
 
-### 4.1 迁移脚本
+### 5.1 迁移脚本
 ```python
 # migrations/001_initial.py
 from yoyo import step
@@ -302,7 +400,7 @@ steps = [
 ]
 ```
 
-### 4.2 迁移管理
+### 5.2 迁移管理
 ```python
 from yoyo import read_migrations
 from yoyo import get_backend
@@ -315,34 +413,34 @@ def apply_migrations(db_url: str):
         backend.apply_migrations(backend.to_apply(migrations))
 ```
 
-## 五、性能优化
+## 六、性能优化
 
-### 5.1 查询优化
+### 6.1 查询优化
 - 使用适当的索引
 - 优化JOIN操作
 - 使用预编译语句
 - 实现结果缓存
 
-### 5.2 连接池管理
+### 6.2 连接池管理
 - 合理设置池大小
 - 监控连接使用
 - 处理连接泄露
 
-## 六、维护指南
+## 七、维护指南
 
-### 6.1 日常维护
+### 7.1 日常维护
 - 定期备份数据
 - 检查数据一致性
 - 优化数据库性能
 - 清理临时数据
 
-### 6.2 故障处理
+### 7.2 故障处理
 - 数据库备份恢复
 - 索引重建
 - 数据修复
 - 性能诊断
 
-### 6.3 监控指标
+### 7.3 监控指标
 - 查询性能分析
 - 存储空间使用
 - 同步队列状态

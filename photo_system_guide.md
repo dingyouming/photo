@@ -114,38 +114,154 @@ class StorageProvider(ABC):
         pass
 ```
 
-### 3.2 数据库设计
+### 3.2 数据库设计与实现
+
+#### 3.2.1 数据库架构
+```python
+# 数据库基础设施
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
+from sqlalchemy.orm import declarative_base, sessionmaker
+
+# 数据库引擎配置
+engine = create_async_engine(
+    "sqlite+aiosqlite:///./data/photos.db",
+    echo=True
+)
+
+# 异步会话工厂
+async_session = sessionmaker(
+    engine, class_=AsyncSession, expire_on_commit=False
+)
+
+# 声明性基类
+Base = declarative_base()
+
+# 数据库初始化
+async def init_db(custom_engine=None) -> None:
+    """初始化数据库，支持自定义引擎（用于测试）"""
+    target_engine = custom_engine or engine
+    async with target_engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+```
+
+#### 3.2.2 表结构定义
 ```sql
--- 照片基础信息
+-- 照片基础信息表
 CREATE TABLE photos (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     file_path TEXT NOT NULL,
     file_name TEXT NOT NULL,
     file_size INTEGER,
+    mime_type TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    onedrive_id TEXT,           -- OneDrive 文件ID
+    backup_id TEXT,             -- 备份云盘文件ID
+    sync_status INTEGER DEFAULT 0
 );
 
--- 照片元数据
+-- 照片元数据表
 CREATE TABLE metadata (
     photo_id INTEGER PRIMARY KEY,
     metadata_json TEXT NOT NULL,
+    extracted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    exif_data JSON,
+    ai_tags JSON,
+    user_tags TEXT[],
     FOREIGN KEY (photo_id) REFERENCES photos(id)
 );
 
--- 标签系统
+-- 标签系统表
 CREATE TABLE tags (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL UNIQUE
+    name TEXT NOT NULL UNIQUE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE photo_tags (
     photo_id INTEGER,
     tag_id INTEGER,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (photo_id, tag_id),
-    FOREIGN KEY (photo_id) REFERENCES photos(id),
-    FOREIGN KEY (tag_id) REFERENCES tags(id)
+    FOREIGN KEY (photo_id) REFERENCES photos(id) ON DELETE CASCADE,
+    FOREIGN KEY (tag_id) REFERENCES tags(id) ON DELETE CASCADE
 );
+```
+
+#### 3.2.3 数据访问模式
+```python
+# 数据访问对象示例
+class PhotoDAO:
+    def __init__(self, session: AsyncSession):
+        self.session = session
+
+    async def create(self, file_path: str, file_name: str, 
+                    file_size: int) -> Photo:
+        """创建新的照片记录"""
+        photo = Photo(
+            file_path=file_path,
+            file_name=file_name,
+            file_size=file_size
+        )
+        self.session.add(photo)
+        await self.session.commit()
+        return photo
+
+    async def get_by_id(self, photo_id: int) -> Optional[Photo]:
+        """根据ID获取照片"""
+        return await self.session.get(Photo, photo_id)
+
+    async def update(self, photo_id: int, 
+                    updates: Dict[str, Any]) -> Optional[Photo]:
+        """更新照片信息"""
+        photo = await self.get_by_id(photo_id)
+        if photo:
+            for key, value in updates.items():
+                setattr(photo, key, value)
+            await self.session.commit()
+        return photo
+```
+
+#### 3.2.4 测试策略
+```python
+# 测试配置
+import pytest
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
+
+@pytest.fixture
+async def test_engine():
+    """测试数据库引擎"""
+    engine = create_async_engine(
+        "sqlite+aiosqlite:///./data/test.db",
+        echo=True
+    )
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    try:
+        yield engine
+    finally:
+        await engine.dispose()
+
+@pytest.fixture
+async def test_session(test_engine):
+    """测试会话"""
+    async_session = sessionmaker(
+        test_engine, class_=AsyncSession, expire_on_commit=False
+    )
+    async with async_session() as session:
+        yield session
+
+# 测试用例示例
+async def test_create_photo(test_session):
+    """测试照片创建功能"""
+    dao = PhotoDAO(test_session)
+    photo = await dao.create(
+        file_path="/test/photo.jpg",
+        file_name="photo.jpg",
+        file_size=1024
+    )
+    assert photo.id is not None
+    assert photo.file_name == "photo.jpg"
 ```
 
 ## 四、部署指南
