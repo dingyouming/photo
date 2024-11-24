@@ -1,0 +1,57 @@
+FROM python:3.9-slim
+
+# 安装开发工具
+RUN apt-get update && apt-get install -y \
+    git \
+    vim \
+    curl \
+    wget \
+    unzip \
+    libaio1 \
+    build-essential \
+    python3-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# 安装 Oracle Instant Client
+RUN mkdir -p /opt/oracle
+WORKDIR /opt/oracle
+RUN wget https://download.oracle.com/otn_software/linux/instantclient/instantclient-basiclite-linuxx64.zip \
+    && unzip instantclient-basiclite-linuxx64.zip \
+    && rm instantclient-basiclite-linuxx64.zip \
+    && echo /opt/oracle/instantclient* > /etc/ld.so.conf.d/oracle-instantclient.conf \
+    && ldconfig
+
+# 设置 Oracle 环境变量
+ENV LD_LIBRARY_PATH=/opt/oracle/instantclient_19_8:$LD_LIBRARY_PATH
+ENV ORACLE_HOME=/opt/oracle/instantclient_19_8
+ENV PATH=$ORACLE_HOME:$PATH
+
+# 设置工作目录
+WORKDIR /workspace
+
+# 安装开发依赖
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# 安装开发工具
+RUN pip install --no-cache-dir \
+    debugpy \
+    ipython \
+    pytest \
+    pytest-cov \
+    black \
+    flake8 \
+    mypy \
+    isort
+
+# 创建非root用户（可选，取决于你的开发偏好）
+# RUN useradd -m -s /bin/bash developer
+# USER developer
+
+# 设置开发环境变量
+ENV PYTHONPATH=/workspace
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+
+# 设置默认命令
+CMD ["/bin/bash"]

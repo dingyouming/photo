@@ -1,0 +1,69 @@
+version: '3.8'
+
+services:
+  dev:
+    build: 
+      context: .
+      dockerfile: Dockerfile.dev
+    ports:
+      - "8000:8000"  # API端口
+      - "5678:5678"  # 调试端口
+    environment:
+      - DB_USER=photo_admin
+      - DB_PASSWORD=your_password
+      - DB_HOST=db
+      - DB_PORT=1521
+      - DB_SERVICE=PHOTODB
+      - PYTHONPATH=/workspace
+      - PYTHONDONTWRITEBYTECODE=1
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - .:/workspace  # 挂载当前目录到容器
+      - ~/.gitconfig:/root/.gitconfig  # Git配置
+      - ~/.ssh:/root/.ssh  # SSH密钥
+      - photo_dev_data:/data
+    command: /bin/bash  # 开发时使用bash
+    stdin_open: true  # docker run -i
+    tty: true        # docker run -t
+    depends_on:
+      - db
+      - redis
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+
+  db:
+    image: gvenzl/oracle-xe:21-slim
+    environment:
+      - ORACLE_PASSWORD=your_password
+      - APP_USER=photo_admin
+      - APP_USER_PASSWORD=your_password
+    volumes:
+      - oracle_dev_data:/opt/oracle/oradata
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql  # 初始化脚本
+    ports:
+      - "1521:1521"
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 2G
+
+  redis:
+    image: redis:alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_dev_data:/data
+    deploy:
+      resources:
+        limits:
+          cpus: '0.2'
+          memory: 256M
+
+volumes:
+  oracle_dev_data:
+  redis_dev_data:
+  photo_dev_data:
