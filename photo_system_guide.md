@@ -122,29 +122,81 @@ class StorageProvider(ABC):
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import declarative_base, sessionmaker
 
+# 开发环境配置
+DATABASE_URL = "sqlite+aiosqlite:///./data/photos.db"
+
+# 生产环境配置
+# DATABASE_URL = "postgresql+asyncpg://user:password@localhost/photos"
+
 # 数据库引擎配置
 engine = create_async_engine(
-    "sqlite+aiosqlite:///./data/photos.db",
-    echo=True
+    DATABASE_URL,
+    echo=True,
+    pool_size=5,
+    max_overflow=10
 )
 
 # 异步会话工厂
 async_session = sessionmaker(
-    engine, class_=AsyncSession, expire_on_commit=False
+    engine, 
+    class_=AsyncSession, 
+    expire_on_commit=False
 )
 
 # 声明性基类
 Base = declarative_base()
 
 # 数据库初始化
-async def init_db(custom_engine=None) -> None:
-    """初始化数据库，支持自定义引擎（用于测试）"""
-    target_engine = custom_engine or engine
-    async with target_engine.begin() as conn:
+async def init_db() -> None:
+    """初始化数据库，创建所有表"""
+    async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+
+# 数据库会话上下文管理器
+async def get_session() -> AsyncSession:
+    """获取数据库会话"""
+    async with async_session() as session:
+        try:
+            yield session
+        finally:
+            await session.close()
 ```
 
-#### 3.2.2 表结构定义
+#### 3.2.2 测试配置
+```python
+# 测试数据库配置
+TEST_DATABASE_URL = "sqlite+aiosqlite:///./data/test.db"
+
+@pytest.fixture(scope="function")
+async def test_engine():
+    """创建测试引擎"""
+    engine = create_async_engine(TEST_DATABASE_URL, echo=True)
+    
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
+        await conn.run_sync(Base.metadata.create_all)
+    
+    try:
+        yield engine
+    finally:
+        await engine.dispose()
+
+@pytest.fixture
+async def test_session(test_engine):
+    """创建测试会话"""
+    async_session = sessionmaker(
+        test_engine, 
+        class_=AsyncSession, 
+        expire_on_commit=False
+    )
+    async with async_session() as session:
+        try:
+            yield session
+        finally:
+            await session.close()
+```
+
+#### 3.2.3 表结构定义
 ```sql
 -- 照片基础信息表
 CREATE TABLE photos (
@@ -188,7 +240,7 @@ CREATE TABLE photo_tags (
 );
 ```
 
-#### 3.2.3 数据访问模式
+#### 3.2.4 数据访问模式
 ```python
 # 数据访问对象示例
 class PhotoDAO:
@@ -222,35 +274,8 @@ class PhotoDAO:
         return photo
 ```
 
-#### 3.2.4 测试策略
+#### 3.2.5 测试策略
 ```python
-# 测试配置
-import pytest
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
-
-@pytest.fixture
-async def test_engine():
-    """测试数据库引擎"""
-    engine = create_async_engine(
-        "sqlite+aiosqlite:///./data/test.db",
-        echo=True
-    )
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    try:
-        yield engine
-    finally:
-        await engine.dispose()
-
-@pytest.fixture
-async def test_session(test_engine):
-    """测试会话"""
-    async_session = sessionmaker(
-        test_engine, class_=AsyncSession, expire_on_commit=False
-    )
-    async with async_session() as session:
-        yield session
-
 # 测试用例示例
 async def test_create_photo(test_session):
     """测试照片创建功能"""
